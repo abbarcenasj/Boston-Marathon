@@ -1,0 +1,531 @@
+---
+title: 'The effect of fast starting on finish times: Boston Marathon data analysis'
+author: "Ana Belen Barcenas J."
+date: "11/28/2018"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+setwd("~/Documents/MIDS/Modeling and Repr of Data/Final project/Boston_marathon")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results="hide"}
+# install.packages("lubridate")
+library(lubridate)
+library(ggplot2)
+library(RColorBrewer)
+library(dplyr)
+library(splines)
+library(scales)
+library(Metrics)
+library(sjstats)
+library(mgcv)
+library(caret)
+library(tidyverse)
+library(fiftystater)
+```
+
+
+Importing the datasets from Boston Marathon results in 2015, 2016, and 2017:
+```{r}
+BM_2017=read.csv("~/Documents/MIDS/Modeling and Repr of Data/Final project/Boston_marathon/dataset/marathon_results_2017.csv")
+BM_2016=read.csv("~/Documents/MIDS/Modeling and Repr of Data/Final project/Boston_marathon/dataset/marathon_results_2016.csv")
+BM_2015=read.csv("~/Documents/MIDS/Modeling and Repr of Data/Final project/Boston_marathon/dataset/marathon_results_2015.csv")
+```
+
+Merge the datasets from 2015, 2016, 2017. But first, let's add a column of the specific year and weather during the marathon.
+```{r}
+BM_2017$X <- NULL
+BM_2017$X.1 <- NULL
+BM_2017$year <- 2017
+BM_2017$temp_f <- 73
+
+BM_2016$X <- NULL
+BM_2016$year <- 2016
+BM_2016$temp_f <- 61
+
+BM_2015$X <- NULL
+BM_2015$X.1 <- NULL
+BM_2015$year <- 2015
+BM_2015$temp_f <- 46
+
+boston_m <- rbind(BM_2017, BM_2016, BM_2015)
+boston_m$Proj.Time <- NULL
+```
+
+There are some missing values but the proportion is less than 1%. I'll get ride of those observations.
+```{r}
+boston_m[boston_m=='-']=NA
+boston_m <- boston_m[complete.cases(boston_m),]
+```
+
+
+Let's transform some variables classes to what we'll need for the model
+```{r, results = 'hide'}
+boston_m$OfficialTsec2 <- as.POSIXct(boston_m$Official.Time,format='%H:%M:%S')
+substr(boston_m$OfficialTsec2,12,19)
+
+# Race times per cohort - convert them in seconds
+boston_m$X5K <- hms(as.character(boston_m$X5K))
+boston_m$X5Ksec <- hour(boston_m$X5K)*60*60 + minute(boston_m$X5K)*60 + second(boston_m$X5K)
+
+boston_m$X10K <- hms(as.character(boston_m$X10K))
+boston_m$X10Ksec <- hour(boston_m$X10K)*60*60 + minute(boston_m$X10K)*60 + second(boston_m$X10K)
+
+boston_m$X15K <- hms(as.character(boston_m$X15K))
+boston_m$X15Ksec <- hour(boston_m$X15K)*60*60 + minute(boston_m$X15K)*60 + second(boston_m$X15K)
+
+boston_m$X20K <- hms(as.character(boston_m$X20K))
+boston_m$X20Ksec <- hour(boston_m$X20K)*60*60 + minute(boston_m$X20K)*60 + second(boston_m$X20K)
+
+boston_m$Half <- hms(as.character(boston_m$Half))
+boston_m$Halfsec <- hour(boston_m$Half)*60*60 + minute(boston_m$Half)*60 + second(boston_m$Half)
+
+boston_m$X25K <- hms(as.character(boston_m$X25K))
+boston_m$X25Ksec <- hour(boston_m$X25K)*60*60 + minute(boston_m$X25K)*60 + second(boston_m$X25K)
+
+boston_m$X30K <- hms(as.character(boston_m$X30K))
+boston_m$X30Ksec <- hour(boston_m$X30K)*60*60 + minute(boston_m$X30K)*60 + second(boston_m$X30K)
+
+boston_m$X35K <- hms(as.character(boston_m$X35K))
+boston_m$X35Ksec <- hour(boston_m$X35K)*60*60 + minute(boston_m$X35K)*60 + second(boston_m$X35K)
+
+boston_m$X40K <- hms(as.character(boston_m$X40K))
+boston_m$X40Ksec <- hour(boston_m$X40K)*60*60 + minute(boston_m$X40K)*60 + second(boston_m$X40K)
+
+boston_m$Official.Time <- hms(as.character(boston_m$Official.Time))
+boston_m$OfficialTsec <- hour(boston_m$Official.Time)*60*60 + minute(boston_m$Official.Time)*60 + second(boston_m$Official.Time)
+
+# Pace per cohort - convert them in seconds
+boston_m$X5Kpace <- boston_m$X5Ksec/5
+boston_m$X10Kpace <- (boston_m$X10Ksec-boston_m$X5Ksec)/5
+boston_m$X15Kpace <- (boston_m$X15Ksec-boston_m$X10Ksec)/5
+boston_m$X20Kpace <- (boston_m$X10Ksec-boston_m$X15Ksec)/5
+boston_m$Halfpace <- (boston_m$Halfsec-boston_m$X20Ksec)/(21.1-20)
+boston_m$X25Kpace <- (boston_m$X25Ksec-boston_m$Halfsec)/(25-21.1)
+boston_m$X30Kpace <- (boston_m$X30Ksec-boston_m$X25Ksec)/5
+boston_m$X35Kpace <- (boston_m$X35Ksec-boston_m$X30Ksec)/5
+boston_m$X40Kpace <- (boston_m$X40Ksec-boston_m$X35Ksec)/5
+boston_m$X42.2Kpace <- (boston_m$OfficialTsec-boston_m$X40Ksec)/(42.2-40)
+boston_m$mean_pace <- boston_m$OfficialTsec/42.2
+```
+
+Create a dummy variable for each gender
+```{r}
+# Gender
+boston_m$M.F <- as.character(boston_m$M.F)
+boston_m$Female[boston_m$M.F =='F'] <- 1
+boston_m$Female[boston_m$M.F =='M'] <- 0
+```
+
+Create a variable of the type of runner: elite, recreational, walker.
+```{r}
+boston_m <- boston_m %>%
+  mutate(category = ifelse((Female==1 & OfficialTsec<=11100), "elite",
+         ifelse((Female==0 & OfficialTsec<=9000), "elite", "recreational")))
+```
+
+Percentage of runners in each category
+```{r}
+proportion_cat <- round((table(boston_m$category) / nrow(boston_m)),2)*100
+proportion_cat
+```
+Percentage of gender
+```{r}
+proportion_gen <- round((table(boston_m$M.F) / nrow(boston_m)),2)*100
+proportion_gen
+```
+```{r}
+mean(boston_m$OfficialTsec)/60
+```
+
+Create the relative pace variable of the first 5 kms: 100*((mean_pace - X5Kpace)/mean_pace) and last kms
+```{r}
+boston_m <- boston_m %>%
+  mutate(RPace5K = ((boston_m$mean_pace - boston_m$X5Kpace)/boston_m$mean_pace)*100)
+
+boston_m <- boston_m %>%
+  mutate(RPace42.2K = ((boston_m$mean_pace - boston_m$X42.2Kpace)/boston_m$mean_pace)*100)
+```
+
+
+
+# EXPLORATORY DATA ANALYSIS
+
+
+1. Country of origin, count vs finish time / USA state of origin, count vs finish time
+
+
+# Let's count how many runners do we have per state
+```{r}
+boston_m$id <- rownames(boston_m)
+
+require(data.table)
+setDT(boston_m)[, runners := uniqueN(id), by = State]
+user_state <- boston_m %>%
+  dplyr::select(State, runners)
+user_state <- unique(user_state)
+```
+
+# USA states coordinates
+```{r}
+mapdata <- read.csv("~/Documents/MIDS/Modeling and Repr of Data/Final project/Boston_marathon/dataset/usa_states.csv", header=TRUE, stringsAsFactors=FALSE) 
+colnames(mapdata)[1] <- "State"
+```
+
+# Let's calculate the average click apply and the avg finish time in each state
+```{r}
+setDT(boston_m)[, avg_finish_time := .(mean(OfficialTsec)), by = State]
+```
+
+```{r}
+runners_state <- boston_m %>%
+  dplyr::select(State, avg_finish_time)
+runners_state <- unique(runners_state)
+```
+
+# Let's join users count, state and coordinates, and click apply avg per person
+```{r}
+x2 <- inner_join(runners_state, mapdata, by = "State")
+x3 <- inner_join(x2,user_state, by="State") # Merge total click applies by state
+# we get ride of states whose coordinates are outside the USA map
+x3 <- x3 %>%
+  dplyr::select(State,runners,avg_finish_time,location,lat,lon)
+x3 <- unique(x3)
+```
+# Let's plot the map!!
+```{r}
+data("fifty_states")
+ggplot() + geom_polygon( data=fifty_states, aes(x=long, y=lat, group = group),color="white", fill="grey10" )
+
+ggplot() + geom_polygon(data=fifty_states, aes(x=long, y=lat, group = group),color="white", fill="grey92" ) +
+  geom_point(data=x3, aes(x=lon, y=lat, size = runners, color=avg_finish_time/60)) +
+  scale_size(name="", range = c(2, 20)) +
+  guides(size=guide_legend("Runners")) +
+  labs(col="Average finish time (mins.)") +
+  theme_void()
+```
+
+
+
+
+2. Gender vs. finish time
+
+```{r}
+# Define color scale
+myColors_g <- c("#66CC99","#006699")
+names(myColors_g) <- levels(boston_m$M.F)
+
+# Density plots of running times to define elite, recreational, and walkers runners
+g <- ggplot(boston_m, aes(x=OfficialTsec2, colour = M.F, fill=M.F)) + geom_density(alpha=.7)
+g1 <- g + scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + labs(x = "Official Marathon Time") +
+  theme_minimal() +
+  scale_x_datetime(breaks = pretty_breaks(9))
+g1
+```
+
+3.1. Age vs finish time (scatterplot or line) : Recreational
+
+```{r}
+
+require(data.table)
+setDT(boston_m)[, mean_finish_time_age := .(mean(OfficialTsec)), by = Age]
+
+myColors_g <- c("#66CC99","#006699")
+names(myColors_g) <- levels(boston_m$M.F)
+
+ggplot(boston_m[category=="recreational",], aes(x=Age, y=mean_finish_time_age, color=M.F)) +
+  geom_point(shape=1) + geom_smooth() + theme_minimal() + theme(legend.position="bottom") +
+  scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + 
+  labs(x = "Age", y = "Mean finish time (seconds)")
+```
+
+3.2. Age vs finish time (scatterplot or line) : Elite
+```{r}
+ggplot(boston_m[category=="elite",], aes(x=Age, y=mean_finish_time_age, color=M.F)) +
+  geom_point(shape=1) + geom_smooth() + theme_minimal() +  theme(legend.position="bottom") +
+  scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + 
+  labs(x = "Age", y = "Mean finish time (seconds)")
+```
+
+
+4. Start pace vs. finish time
+
+```{r}
+plot(y = boston_m$OfficialTsec, x = boston_m$X5Kpace, xlab = "X5Kpace", ylab = "OfficialTsec")
+```
+
+#elite
+```{r}
+plot(y = boston_m[boston_m$category=="elite",]$OfficialTsec, x = boston_m[boston_m$category=="elite",]$X5Kpace, xlab = "X5Kpace", ylab = "OfficialTsec")
+```
+
+
+5. Relative start pace vs. finish time
+```{r}
+plot(y = boston_m[1:5000,]$OfficialTsec, x = boston_m[1:5000,]$RPace5K, xlab = "RPace5K", ylab = "OfficialTsec")
+```
+
+6. Relative start pace vs. average finish time
+
+The relationship does not look clear, I'll take the average finish time every 1% difference in relative start (5kms) pace.
+```{r}
+require(data.table)
+boston_m <- boston_m %>%
+  mutate(round_RPace5K=round(RPace5K,1))
+setDT(boston_m)[, mean_finish_time_5pace := .(mean(OfficialTsec)), by = round_RPace5K]
+```
+
+6.1. Recreational runners by gender
+
+Let's see the relationship between finish time and relative pace at the beginning of the race (5km)
+```{r}
+myColors_g <- c("#66CC99","#006699")
+names(myColors_g) <- levels(boston_m$M.F)
+
+ggplot(boston_m[category=="recreational",], aes(x=RPace5K, y=mean_finish_time_5pace, color=M.F)) +
+  geom_point(shape=1) + geom_smooth() + theme(legend.position="top") + theme_minimal() +
+  scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + 
+  labs(x = "Relative Pace - 5km", y = "Mean finish time (seconds)")
+```
+
+6.2. Elite runners by gender
+```{r}
+ggplot(boston_m[category=="elite",], aes(x=RPace5K, y=mean_finish_time_5pace, color=M.F)) +
+  geom_point(shape=1) + geom_smooth() + theme(legend.position="top") + theme_minimal() +
+  scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + 
+  labs(x = "Relative Pace - 5km", y = "Mean finish time (seconds)")
+```
+
+
+7.1. Recreational runners by gender an start pace (draw line in the 0 and slow/faster starters)
+
+Let's see the distribution of runners vs relative pace for recreational runners
+```{r}
+d <- ggplot(boston_m[boston_m$category=="recreational",], 
+            aes(x=RPace5K, colour = M.F, colour=M.F)) + geom_density()
+d + scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + labs(x = "Relative Pace - 5km") +
+  theme_minimal()
+```
+
+7.2. Elite runners by gender
+
+Let's see the distribution of runners vs relative pace for ELITE runners
+```{r}
+d <- ggplot(boston_m[boston_m$category=="elite",], 
+            aes(x=RPace5K, colour = M.F, colour=M.F)) + geom_density()
+d + scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + labs(x = "Relative Pace - 5km") +
+  theme_minimal()
+```
+
+8. Relative start pace vs. relative finish pace by gender. Are women too cautiously?
+```{r}
+
+setDT(boston_m)[, mean_finish_pace := .(mean(RPace42.2K)), by = round_RPace5K]
+
+
+myColors_g <- c("#66CC99","#006699")
+names(myColors_g) <- levels(boston_m$M.F)
+
+ggplot(boston_m[category=="recreational",], aes(x=RPace5K, y=mean_finish_pace, color=M.F)) +
+  geom_point(shape=1) + geom_smooth() + theme(legend.position="top") + theme_minimal() +
+  scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + 
+  labs(x = "Relative start pace - 5km", y = "Relative finish pace - 5km")
+```
+
+
+9. Relative finish pace vs. avg finish time?
+I'll take the average finish time every 1% difference in relative finish pace.
+```{r}
+require(data.table)
+boston_m <- boston_m %>%
+  mutate(round_RPace10K=round(RPace42.2K,1))
+setDT(boston_m)[, mean_finish_time_10pace := .(mean(OfficialTsec)), by = round_RPace10K]
+
+
+myColors_g <- c("#66CC99","#006699")
+names(myColors_g) <- levels(boston_m$M.F)
+
+ggplot(boston_m[category=="recreational",], aes(x=RPace42.2K, y=mean_finish_time_10pace, color=M.F)) +
+  geom_point(shape=1) + geom_smooth() + theme(legend.position="top") + theme_minimal() +
+  scale_colour_manual(name = "Gender",values = myColors_g) + 
+  scale_fill_manual(name = "Gender",values = myColors_g) + 
+  labs(x = "Relative Pace - 42.2km", y = "Mean finish time (seconds)")
+```
+
+
+# MODEL
+
+# Split the data into training and test set
+```{r}
+set.seed(123)
+training.samples <- boston_m$OfficialTsec %>%
+  createDataPartition(p = 0.8, list = FALSE) 
+train.data  <- boston_m[training.samples, ]
+test.data <- boston_m[-training.samples, ]
+```
+
+1. Linear regression: finish pace vs. start pace
+
+```{r}
+reg1 <- lm(RPace42.2K ~ as.factor(year) + Age + Female + RPace5K,
+           data = train.data[train.data$category=="recreational",])
+summary(reg1)
+```
+
+2. Linear regression: finish time vs. start pace
+
+```{r}
+reg2 <- lm(OfficialTsec ~ as.factor(year) + Age + Female + RPace5K,
+           data = train.data[train.data$category=="recreational",])
+summary(reg2)
+```
+
+3.1. Non-linear model - Cubic splines: finish time vs. start pace RECREATIONAL
+
+```{r}
+reg3 <- lm(OfficialTsec ~ as.factor(year) + Age + Female + bs(RPace5K, degree = 2, knots = 2),
+           data = train.data[train.data$category=="recreational",])
+summary(reg3)
+```
+
+Conficence intervals:
+```{r}
+confint(reg3, level=0.95)
+```
+
+How well the splines fits the data?
+```{r}
+ggplot(train.data[train.data$category=="recreational",], aes(RPace5K, OfficialTsec) ) +
+  geom_point() +
+  stat_smooth(method = lm, formula = y ~ splines::bs(x, degree = 2, knots = 3))
+
+```
+
+3.1.1 Model diagnostics
+
+```{r}
+par(mfrow=c(2,2))
+plot(reg3)
+par(mfrow=c(1,1))
+```
+
+```{r, fig.width=7, fig.height=4}
+par(mfrow=c(2,2)) 
+
+boxplot(reg3$residuals~train.data[train.data$category=="recreational",]$year, ylab = "Residuals", xlab = "Year")
+boxplot(reg3$resid~train.data[train.data$category=="recreational",]$Female, ylab = "Residuals", xlab = "Gender")
+
+plot(reg3$resid, x=train.data[train.data$category=="recreational",]$Age, ylab = "Residuals", xlab = "Age")
+abline(0,0)
+plot(reg3$resid, x=train.data[train.data$category=="recreational",]$RPace5K, ylab = "Residuals", xlab = "Pace")
+abline(0,0)
+```
+
+3.1.2. Outliers, leverage, and/or influential points.
+
+Now that I have decided about what predictors, interactions, and transformations I will include in the model, I'll double check if there is any outlier, leverage points, and/or influential points to pay attention in.
+
+```{r, fig.width=4, fig.height=2, fig.align="center"}
+library(MASS)
+leverage = hatvalues(reg3)
+cooks = cooks.distance(reg3)
+new_dataset = cbind(train.data, leverage, cooks)
+
+hist(leverage, main = "Leverage values for Boston Marathon regression")
+```
+```{r, fig.width=4, fig.height=2, fig.align="center"}
+hist(cooks, main = "Cook's distances for Boston Marathon regression")
+```
+
+3.1.3 Model predictions and performance
+```{r}
+predictions <- reg3 %>% predict(test.data)
+# Model performance
+data.frame(
+  RMSE = RMSE(predictions, test.data$OfficialTsec),
+  R2 = R2(predictions, test.data$OfficialTsec)
+)
+```
+
+
+
+
+3.2. Non-linear model - Cubic splines: finish time vs. start pace ELITE
+
+```{r}
+reg4 <- lm(OfficialTsec ~ as.factor(year) + Age + Female + bs(RPace5K, degree = 2, knots = 0),
+           data = train.data[train.data$category=="elite",])
+summary(reg4)
+```
+
+Conficence intervals:
+```{r}
+confint(reg3, level=0.95)
+```
+
+How well the splines fits the data? 
+```{r}
+ggplot(train.data[train.data$category=="elite",], aes(RPace5K, OfficialTsec) ) +
+  geom_point() +
+  stat_smooth(method = lm, formula = y ~ splines::bs(x, degree = 2, knots = 0))
+
+```
+
+
+3.2.1 Model diagnostics
+```{r, fig.width=7, fig.height=4}
+par(mfrow=c(2,2)) 
+
+boxplot(reg4$residuals~train.data[train.data$category=="elite",]$year, ylab = "Residuals", xlab = "Year")
+boxplot(reg4$resid~train.data[train.data$category=="elite",]$Female, ylab = "Residuals", xlab = "Gender")
+
+plot(reg4$resid, x=train.data[train.data$category=="elite",]$Age, ylab = "Residuals", xlab = "Age")
+abline(0,0)
+plot(reg4$resid, x=train.data[train.data$category=="elite",]$RPace5K, ylab = "Residuals", xlab = "Pace")
+abline(0,0)
+```
+
+3.2.2. Outliers, leverage, and/or influential points.
+
+Now that I have decided about what predictors, interactions, and transformations I will include in the model, I'll double check if there is any outlier, leverage points, and/or influential points to pay attention in.
+
+```{r, fig.width=4, fig.height=2, fig.align="center"}
+leverage = hatvalues(reg4)
+cooks = cooks.distance(reg4)
+new_dataset = cbind(train.data, leverage, cooks)
+
+hist(leverage, main = "Leverage values for Boston Marathon regression")
+```
+```{r, fig.width=4, fig.height=2, fig.align="center"}
+hist(cooks, main = "Cook's distances for smoking regression")
+```
+
+
+3.2.3 Model predictions and performance
+```{r}
+predictions2 <- reg4 %>% predict(test.data)
+# Model performance
+data.frame(
+  RMSE = RMSE(predictions2, test.data$OfficialTsec),
+  R2 = R2(predictions2, test.data$OfficialTsec)
+)
+```
+
+
+
+
+
