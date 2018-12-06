@@ -3,8 +3,8 @@ title: 'The effect of fast starting on finish times: Boston Marathon data analys
 author: "Ana Belen Barcenas J."
 date: "11/28/2018"
 output:
-  pdf_document: default
   word_document: default
+  pdf_document: default
   html_document:
     df_print: paged
 ---
@@ -160,8 +160,18 @@ boston_m <- boston_m %>%
 
 1. Country of origin, count vs finish time / USA state of origin, count vs finish time
 
+Let's see users by country
+```{r}
+boston_m$id <- rownames(boston_m)
 
-# Let's count how many runners do we have per state
+require(data.table)
+setDT(boston_m)[, runners := uniqueN(id), by = Country]
+user_state <- boston_m %>%
+  dplyr::select(Country, runners)
+user_country <- unique(user_state)
+```
+
+Let's count how many runners do we have per state
 ```{r}
 boston_m$id <- rownames(boston_m)
 
@@ -178,7 +188,7 @@ mapdata <- read.csv("~/Documents/MIDS/Modeling and Repr of Data/Final project/Bo
 colnames(mapdata)[1] <- "State"
 ```
 
-# Let's calculate the average click apply and the avg finish time in each state
+Let's calculate the average finish time and the avg finish time in each state
 ```{r}
 setDT(boston_m)[, avg_finish_time := .(mean(OfficialTsec)), by = State]
 ```
@@ -189,7 +199,7 @@ runners_state <- boston_m %>%
 runners_state <- unique(runners_state)
 ```
 
-# Let's join users count, state and coordinates, and click apply avg per person
+Let's join users count, state and coordinates, and click apply avg per person
 ```{r}
 x2 <- inner_join(runners_state, mapdata, by = "State")
 x3 <- inner_join(x2,user_state, by="State") # Merge total click applies by state
@@ -198,7 +208,7 @@ x3 <- x3 %>%
   dplyr::select(State,runners,avg_finish_time,location,lat,lon)
 x3 <- unique(x3)
 ```
-# Let's plot the map!!
+Let's plot the map
 ```{r}
 data("fifty_states")
 ggplot() + geom_polygon( data=fifty_states, aes(x=long, y=lat, group = group),color="white", fill="grey10" )
@@ -453,11 +463,11 @@ hist(cooks, main = "Cook's distances for Boston Marathon regression")
 
 3.1.3 Model predictions and performance
 ```{r}
-predictions <- reg3 %>% predict(test.data)
+predictions <- reg3 %>% predict(test.data[test.data$category=="recreational",])
 # Model performance
 data.frame(
-  RMSE = RMSE(predictions, test.data$OfficialTsec),
-  R2 = R2(predictions, test.data$OfficialTsec)
+  RMSE = RMSE(predictions, test.data[test.data$category=="recreational",]$OfficialTsec),
+  R2 = R2(predictions, test.data[test.data$category=="recreational",]$OfficialTsec)
 )
 ```
 
@@ -516,14 +526,59 @@ hist(cooks, main = "Cook's distances for smoking regression")
 
 
 3.2.3 Model predictions and performance
+
+Let's plot train and test data distribution by finish time and category
+
 ```{r}
-predictions2 <- reg4 %>% predict(test.data)
+# Define color scale
+myColors_g <- c("#333333","#999999")
+names(myColors_g) <- levels(boston_m$category)
+
+# Density plots of running times to define elite, recreational, and walkers runners
+g <- ggplot(test.data, aes(x=OfficialTsec2, colour = category, fill=category)) + geom_density(alpha=.7)
+g1 <- g + scale_colour_manual(name = "Category",values = myColors_g) + 
+  scale_fill_manual(name = "Category",values = myColors_g) + labs(x = "Finish Time") +
+  theme_minimal() + theme(legend.position="bottom") +
+  scale_x_datetime(breaks = pretty_breaks(9))
+g1
+```
+
+```{r}
+# Define color scale
+myColors_g <- c("#993333","#FF9999")
+names(myColors_g) <- levels(boston_m$category)
+
+# Density plots of running times to define elite, recreational, and walkers runners
+g <- ggplot(train.data, aes(x=OfficialTsec2, colour = category, fill=category)) + geom_density(alpha=.7)
+g1 <- g + scale_colour_manual(name = "Category",values = myColors_g) + 
+  scale_fill_manual(name = "Category",values = myColors_g) + labs(x = "Finish Time") +
+  theme_minimal() +  theme(legend.position="bottom")+
+  scale_x_datetime(breaks = pretty_breaks(9))
+g1
+```
+
+```{r}
+predictions2 <- reg4 %>% predict(test.data[test.data$category=="elite",])
 # Model performance
 data.frame(
-  RMSE = RMSE(predictions2, test.data$OfficialTsec),
-  R2 = R2(predictions2, test.data$OfficialTsec)
+  RMSE = RMSE(predictions2, test.data[test.data$category=="elite",]$OfficialTsec),
+  R2 = R2(predictions2, test.data[test.data$category=="elite",]$OfficialTsec)
 )
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
