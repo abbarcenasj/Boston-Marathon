@@ -1,5 +1,5 @@
 # Boston Marathon
-## The effect of different pacing strategies on finish times.
+## The effect of pacing strategies on finish times.
 
 By: Ana B. Barcenas
 
